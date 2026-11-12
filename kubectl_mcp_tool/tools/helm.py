@@ -8,9 +8,9 @@ from typing import Any, Callable, Dict, List, Optional
 import yaml
 from mcp.types import ToolAnnotations
 
-from kubectl_mcp_tool.k8s_config import _get_kubectl_context_args
+from kubectl_mcp_tool.k8s_config import _get_kubectl_context_args, get_kubectl_env
 from kubectl_mcp_tool.schemas import HelmListResponse, HelmStatusResponse
-from kubectl_mcp_tool.structured import structured_response
+from kubectl_mcp_tool.structured import response_schema, structured_response
 
 logger = logging.getLogger("mcp-server")
 
@@ -45,11 +45,11 @@ def _add_helm_repo(repo: str, chart: str) -> tuple:
     try:
         subprocess.check_output(
             ["helm", "repo", "add", repo_name, repo_url],
-            stderr=subprocess.PIPE, text=True
+            env=get_kubectl_env(), stderr=subprocess.PIPE, text=True
         )
         subprocess.check_output(
             ["helm", "repo", "update"],
-            stderr=subprocess.PIPE, text=True
+            env=get_kubectl_env(), stderr=subprocess.PIPE, text=True
         )
     except subprocess.CalledProcessError as e:
         error_msg = e.stderr if hasattr(e, 'stderr') else str(e)
@@ -119,12 +119,12 @@ def register_helm_tools(
 
             try:
                 ns_cmd = ["kubectl"] + _get_kubectl_context_args(context) + ["get", "namespace", namespace]
-                subprocess.check_output(ns_cmd, stderr=subprocess.PIPE, text=True)
+                subprocess.check_output(ns_cmd, env=get_kubectl_env(), stderr=subprocess.PIPE, text=True)
             except subprocess.CalledProcessError:
                 logger.info(f"Namespace {namespace} not found, creating it")
                 create_ns_cmd = ["kubectl"] + _get_kubectl_context_args(context) + ["create", "namespace", namespace]
                 try:
-                    subprocess.check_output(create_ns_cmd, stderr=subprocess.PIPE, text=True)
+                    subprocess.check_output(create_ns_cmd, env=get_kubectl_env(), stderr=subprocess.PIPE, text=True)
                 except subprocess.CalledProcessError as e:
                     logger.error(f"Error creating namespace: {e.stderr if hasattr(e, 'stderr') else str(e)}")
                     return {"success": False, "error": f"Failed to create namespace: {e.stderr if hasattr(e, 'stderr') else str(e)}"}
@@ -138,7 +138,7 @@ def register_helm_tools(
                     cmd += ["-f", values_file]
 
                 logger.debug(f"Running command: {' '.join(cmd)}")
-                result = subprocess.check_output(cmd, stderr=subprocess.PIPE, text=True)
+                result = subprocess.check_output(cmd, env=get_kubectl_env(), stderr=subprocess.PIPE, text=True)
 
                 return {
                     "success": True,
@@ -209,7 +209,7 @@ def register_helm_tools(
                     cmd += ["-f", values_file]
 
                 logger.debug(f"Running command: {' '.join(cmd)}")
-                result = subprocess.check_output(cmd, stderr=subprocess.PIPE, text=True)
+                result = subprocess.check_output(cmd, env=get_kubectl_env(), stderr=subprocess.PIPE, text=True)
 
                 return {
                     "success": True,
@@ -256,7 +256,7 @@ def register_helm_tools(
             logger.debug(f"Running command: {' '.join(cmd)}")
 
             try:
-                result = subprocess.check_output(cmd, stderr=subprocess.PIPE, text=True)
+                result = subprocess.check_output(cmd, env=get_kubectl_env(), stderr=subprocess.PIPE, text=True)
                 return {
                     "success": True,
                     "context": context or "current",
@@ -272,7 +272,7 @@ def register_helm_tools(
             return {"success": False, "error": f"Unexpected error: {str(e)}"}
 
     @server.tool(
-        output_schema=HelmListResponse.model_json_schema(),
+        output_schema=response_schema(HelmListResponse),
         annotations=ToolAnnotations(
             title="List Helm Releases",
             readOnlyHint=True,
@@ -333,7 +333,7 @@ def register_helm_tools(
                 cmd += ["--deployed", "--failed", "--pending", "--superseded", "--uninstalled", "--uninstalling"]
 
             logger.debug(f"Running command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=30)
 
             if result.returncode == 0:
                 releases = json.loads(result.stdout) if result.stdout.strip() else []
@@ -350,7 +350,7 @@ def register_helm_tools(
             return {"success": False, "error": str(e)}
 
     @server.tool(
-        output_schema=HelmStatusResponse.model_json_schema(),
+        output_schema=response_schema(HelmStatusResponse),
         annotations=ToolAnnotations(
             title="Helm Release Status",
             readOnlyHint=True,
@@ -391,7 +391,7 @@ def register_helm_tools(
                 cmd.append("--show-resources")
 
             logger.debug(f"Running command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=30)
 
             if result.returncode == 0:
                 status = json.loads(result.stdout) if result.stdout.strip() else {}
@@ -432,7 +432,7 @@ def register_helm_tools(
             cmd = ["helm"] + _get_helm_context_args(context) + ["history", release_name, "-n", namespace, "--output", "json", "--max", str(max_revisions)]
 
             logger.debug(f"Running command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=30)
 
             if result.returncode == 0:
                 history = json.loads(result.stdout) if result.stdout.strip() else []
@@ -485,7 +485,7 @@ def register_helm_tools(
         if what == "values":
             cmd += ["--output", "yaml"] + (["--all"] if all_values else [])
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=30)
         except Exception as e:
             return {"success": False, "error": str(e)}
         if result.returncode != 0:
@@ -529,7 +529,7 @@ def register_helm_tools(
         if jsonpath and what == "values":
             cmd += ["--jsonpath", jsonpath]
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=60)
         except Exception as e:
             return {"success": False, "error": str(e)}
         if result.returncode != 0:
@@ -575,7 +575,7 @@ def register_helm_tools(
                 cmd.extend(["--version", version])
 
             logger.debug(f"Running command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=60)
 
             if result.returncode == 0:
                 charts = json.loads(result.stdout) if result.stdout.strip() else []
@@ -621,7 +621,7 @@ def register_helm_tools(
                 cmd.append("--list-repo-url")
 
             logger.debug(f"Running command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=60)
 
             if result.returncode == 0:
                 charts = json.loads(result.stdout) if result.stdout.strip() else []
@@ -655,7 +655,7 @@ def register_helm_tools(
             cmd = ["helm", "repo", "list", "--output", "json"]
 
             logger.debug(f"Running command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=30)
 
             if result.returncode == 0:
                 repos = json.loads(result.stdout) if result.stdout.strip() else []
@@ -715,7 +715,7 @@ def register_helm_tools(
                 cmd.append("--pass-credentials")
 
             logger.debug(f"Running command: {' '.join(cmd[:4])}...")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=60)
 
             if result.returncode == 0:
                 return {
@@ -751,7 +751,7 @@ def register_helm_tools(
             cmd = ["helm", "repo", "remove", name]
 
             logger.debug(f"Running command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=30)
 
             if result.returncode == 0:
                 return {
@@ -790,7 +790,7 @@ def register_helm_tools(
                 cmd.extend(repos)
 
             logger.debug(f"Running command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=120)
 
             if result.returncode == 0:
                 return {
@@ -858,7 +858,7 @@ def register_helm_tools(
                 cmd.extend(["--timeout", timeout])
 
             logger.debug(f"Running command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=600)
 
             if result.returncode == 0:
                 return {
@@ -912,7 +912,7 @@ def register_helm_tools(
                 cmd.extend(["--filter", filter])
 
             logger.debug(f"Running command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=600)
 
             if result.returncode == 0:
                 return {
@@ -972,7 +972,7 @@ def register_helm_tools(
                 cmd.append("--with-subcharts")
 
             logger.debug(f"Running command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=60)
 
             if result.returncode == 0:
                 return {
@@ -1032,7 +1032,7 @@ def register_helm_tools(
                 cmd.append("--dependency-update")
 
             logger.debug(f"Running command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=120)
 
             if result.returncode == 0:
                 return {
@@ -1072,7 +1072,7 @@ def register_helm_tools(
                 cmd.append("--skip-refresh")
 
             logger.debug(f"Running command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=120)
 
             if result.returncode == 0:
                 return {
@@ -1108,7 +1108,7 @@ def register_helm_tools(
             cmd = ["helm", "dependency", "list", chart_path]
 
             logger.debug(f"Running command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=30)
 
             if result.returncode == 0:
                 return {
@@ -1147,7 +1147,7 @@ def register_helm_tools(
                 cmd.append("--skip-refresh")
 
             logger.debug(f"Running command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=120)
 
             if result.returncode == 0:
                 return {
@@ -1202,7 +1202,7 @@ def register_helm_tools(
                 cmd.append("--untar")
 
             logger.debug(f"Running command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=120)
 
             if result.returncode == 0:
                 return {
@@ -1242,7 +1242,7 @@ def register_helm_tools(
                 cmd.extend(["--starter", starter])
 
             logger.debug(f"Running command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=30)
 
             if result.returncode == 0:
                 return {
@@ -1289,7 +1289,7 @@ def register_helm_tools(
                 cmd.extend(["--repo", repo])
             if values:
                 cmd.extend(["--set", values])
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=60)
             if result.returncode == 0:
                 return {"success": True, "context": context or "current", "manifest": result.stdout}
             else:

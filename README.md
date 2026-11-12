@@ -607,7 +607,8 @@ kubectl-mcp-server --transport sse --port 8000
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `KUBECONFIG` | Path to kubeconfig file | `~/.kube/config` |
+| `KUBECONFIG` | OS-separated kubeconfig file path list | `~/.kube/config` |
+| `MCP_K8S_KUBECONFIG` | MCP-specific kubeconfig path list; takes precedence over `KUBECONFIG` | Unset |
 | `MCP_DEBUG` | Enable verbose logging | `false` |
 | `MCP_LOG_FILE` | Log file path | None (stdout) |
 
@@ -893,6 +894,27 @@ Seamlessly manage multiple Kubernetes clusters through natural language. **Every
 
 Most kubectl-backed tools accept an optional `context` parameter to target specific clusters.
 Note: vCluster (vind) and kind tools run via their local CLIs and do not accept the `context` parameter.
+
+### Configuration source and refresh
+
+The Kubernetes provider, context tools, and shared kubectl runner use `MCP_K8S_KUBECONFIG`
+when set, then `KUBECONFIG`, then `~/.kube/config`. Multiple files use the OS
+path separator (`:` on macOS/Linux, `;` on Windows); `~` is expanded for each
+entry. Named entries use the first definition, and the current context uses the
+first non-empty definition.
+Relative certificate and key paths resolve against the file that defines them.
+
+A kubeconfig can omit `current-context`. `list_contexts` then returns
+`active_context: null`, and resource calls must specify `context`. Invalid or
+unreadable explicitly configured files return a configuration error rather than
+an empty context list or a fallback identity. To use a ServiceAccount directly,
+set `MCP_K8S_PROVIDER=in-cluster`.
+
+Context queries and client creation refresh the same configuration snapshot.
+Configuration changes invalidate cached clients; `--stateless` bypasses client
+caching, and `--watch-kubeconfig` also detects file replacement, creation, and
+deletion. Structured read-tool responses include separate success and error
+schemas, so configuration errors remain visible to MCP clients.
 
 **Talk to your AI assistant:**
 ```
