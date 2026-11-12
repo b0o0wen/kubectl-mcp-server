@@ -19,16 +19,21 @@ Environment Variables:
 """
 
 import os
+import inspect
 import logging
 import threading
-import time
+from copy import deepcopy
+from functools import wraps
 from typing import Optional, Any, List, Dict, Callable
 
 logger = logging.getLogger("mcp-server")
 
-_stateless_mode = os.environ.get("MCP_STATELESS_MODE", "").lower() in ("true", "1", "yes")
+_stateless_mode = os.environ.get("MCP_STATELESS_MODE", "").lower() in (
+    "true",
+    "1",
+    "yes",
+)
 _kubeconfig_watcher: Optional["KubeconfigWatcher"] = None
-_kubeconfig_last_mtime: Dict[str, float] = {}
 _config_change_callbacks: List[Callable[[], None]] = []
 
 
@@ -48,7 +53,8 @@ class KubeconfigWatcher:
         self._check_interval = check_interval
         self._running = False
         self._thread: Optional[threading.Thread] = None
-        self._watched_files: Dict[str, float] = {}
+        self._watched_files: Dict[str, Any] = {}
+        self._stop_event = threading.Event()
         self._lock = threading.Lock()
 
     def start(self):
@@ -56,6 +62,7 @@ class KubeconfigWatcher:
         if self._running:
             return
 
+        self._stop_event.clear()
         self._running = True
         self._thread = threading.Thread(target=self._watch_loop, daemon=True)
         self._thread.start()
@@ -64,6 +71,7 @@ class KubeconfigWatcher:
     def stop(self):
         """Stop watching for kubeconfig changes."""
         self._running = False
+        self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=2.0)
             self._thread = None
@@ -76,53 +84,57 @@ class KubeconfigWatcher:
             filepath: Path to kubeconfig file
         """
         filepath = os.path.expanduser(filepath)
-        if os.path.exists(filepath):
-            with self._lock:
-                self._watched_files[filepath] = os.path.getmtime(filepath)
+        with self._lock:
+            self._watched_files[filepath] = self._file_signature(filepath)
+
+    @staticmethod
+    def _file_signature(filepath):
+        try:
+            stat = os.stat(filepath)
+        except FileNotFoundError:
+            return None
+        return (
+            stat.st_mtime_ns,
+            stat.st_ctime_ns,
+            stat.st_size,
+            stat.st_ino,
+            stat.st_dev,
+        )
 
     def _watch_loop(self):
-        """Main watch loop - check for file changes periodically."""
-        while self._running:
+        while not self._stop_event.is_set():
             try:
                 self._check_files()
-            except Exception as e:
-                logger.debug(f"Kubeconfig watch error: {e}")
-            time.sleep(self._check_interval)
+            except Exception as error:
+                logger.debug(f"Kubeconfig watch error: {error}")
+            self._stop_event.wait(self._check_interval)
 
     def _check_files(self):
-        """Check all watched files for changes."""
+        changed = False
         with self._lock:
-            for filepath, last_mtime in list(self._watched_files.items()):
-                try:
-                    if not os.path.exists(filepath):
-                        continue
-
-                    current_mtime = os.path.getmtime(filepath)
-                    if current_mtime != last_mtime:
-                        self._watched_files[filepath] = current_mtime
-                        logger.info(f"Kubeconfig changed: {filepath}")
-                        self._on_config_changed()
-                except Exception as e:
-                    logger.debug(f"Error checking {filepath}: {e}")
+            for filepath, previous in list(self._watched_files.items()):
+                current = self._file_signature(filepath)
+                if current != previous:
+                    self._watched_files[filepath] = current
+                    changed = True
+        # Callbacks can add watched files or load clients: never hold the file
+        # lock while calling provider code or user callbacks.
+        if changed:
+            self._on_config_changed()
 
     def _on_config_changed(self):
-        """Handle kubeconfig file change - invalidate caches."""
         global _config_loaded
         _config_loaded = False
-
-        if _HAS_PROVIDER:
-            try:
-                provider = get_provider()
-                if hasattr(provider, 'invalidate_cache'):
-                    provider.invalidate_cache()
-            except Exception:
-                pass
-
-        for callback in _config_change_callbacks:
+        # A watcher notification must not initialize a different provider.
+        with KubernetesProvider._instance_lock:
+            provider = KubernetesProvider._instance
+        if provider is not None:
+            provider.invalidate_cache()
+        for callback in list(_config_change_callbacks):
             try:
                 callback()
-            except Exception as e:
-                logger.debug(f"Config change callback error: {e}")
+            except Exception as error:
+                logger.debug(f"Config change callback error: {error}")
 
 
 def enable_kubeconfig_watch(check_interval: float = 5.0):
@@ -145,11 +157,17 @@ def enable_kubeconfig_watch(check_interval: float = 5.0):
     if _kubeconfig_watcher is not None:
         return
 
-    _kubeconfig_watcher = KubeconfigWatcher(check_interval=check_interval)
-    kubeconfig_env = os.environ.get('KUBECONFIG', '~/.kube/config')
-    for path in kubeconfig_env.split(os.pathsep):
-        _kubeconfig_watcher.add_file(path)
-    _kubeconfig_watcher.start()
+    watcher = KubeconfigWatcher(check_interval=check_interval)
+    with KubernetesProvider._instance_lock:
+        provider = KubernetesProvider._instance
+        provider_config = (
+            provider.config if provider is not None else ProviderConfig.from_env()
+        )
+    if provider_config.provider_type != ProviderType.IN_CLUSTER:
+        for path in get_kubeconfig_paths(provider_config.kubeconfig_path):
+            watcher.add_file(path)
+    _kubeconfig_watcher = watcher
+    watcher.start()
 
 
 def disable_kubeconfig_watch():
@@ -198,344 +216,237 @@ def set_stateless_mode(enabled: bool):
     else:
         logger.info("Stateless mode disabled - API clients will be cached")
 
-try:
-    from .providers import (
-        KubernetesProvider,
-        ProviderConfig,
-        ProviderType,
-        ProviderError,
-        UnknownContextError,
-        get_provider,
-        get_context_names,
-        get_current_context as provider_get_current_context,
-        validate_context,
-    )
-    _HAS_PROVIDER = True
-except ImportError:
-    _HAS_PROVIDER = False
-    logger.debug("Provider module not available, using basic config")
 
+from .providers import (
+    KubernetesProvider,
+    ProviderConfig,
+    ProviderType,
+    ProviderError,
+    UnknownContextError,
+    get_provider,
+    get_context_names,
+    get_current_context as provider_get_current_context,
+    get_kubeconfig_paths,
+    resolve_kubeconfig_source,
+    validate_context,
+)
+
+_HAS_PROVIDER = True
 _config_loaded = False
 _original_load_kube_config = None
 
 
-def load_kubernetes_config(context: str = ""):
-    """Load Kubernetes configuration.
+def load_kubernetes_config(
+    context: str = "",
+    client_configuration=None,
+    persist_config=True,
+    temp_file_path=None,
+):
+    """Load the authoritative provider source, propagating configuration errors.
 
-    Tries in-cluster config first (when running inside a pod),
-    then falls back to kubeconfig file.
-
-    Args:
-        context: Optional context name for kubeconfig provider
-
-    Returns:
-        bool: True if config loaded successfully, False otherwise
+    An explicit target Configuration stays isolated. Bare startup calls set
+    the SDK default for compatibility with legacy clients.
     """
     global _config_loaded
+    from kubernetes import client
 
-    from kubernetes import config
-    from kubernetes.config.config_exception import ConfigException
-
-    try:
-        config.load_incluster_config()
-        logger.info("Loaded in-cluster Kubernetes configuration")
-        _config_loaded = True
-        return True
-    except ConfigException:
-        logger.debug("Not running in-cluster, trying kubeconfig...")
-
-    try:
-        kubeconfig_path = os.environ.get('KUBECONFIG', '~/.kube/config')
-        kubeconfig_path = os.path.expanduser(kubeconfig_path)
-
-        if context:
-            config.load_kube_config(config_file=kubeconfig_path, context=context)
-            logger.info(f"Loaded kubeconfig context '{context}' from {kubeconfig_path}")
-        else:
-            config.load_kube_config(config_file=kubeconfig_path)
-            logger.info(f"Loaded kubeconfig from {kubeconfig_path}")
-
-        _config_loaded = True
-        return True
-    except ConfigException as e:
-        logger.error(f"Failed to load Kubernetes config: {e}")
-        return False
+    configuration = get_provider().get_configuration(
+        context, persist_config=persist_config, temp_file_path=temp_file_path
+    )
+    if client_configuration is None:
+        client.Configuration.set_default(configuration)
+    else:
+        client_configuration.__dict__.update(deepcopy(configuration.__dict__))
+    _config_loaded = True
+    return True
 
 
 def _patched_load_kube_config(*args, **kwargs):
-    """Patched version of load_kube_config that tries in-cluster first.
-
-    When called with explicit arguments (config_file, context, client_configuration),
-    always pass through to the original function. Only try in-cluster as a
-    fallback for bare calls during initial module loading.
-    """
-    global _config_loaded, _original_load_kube_config
-
-    has_explicit_args = bool(args) or bool(kwargs)
-
-    if has_explicit_args and _original_load_kube_config:
-        _original_load_kube_config(*args, **kwargs)
+    """Honor explicit SDK files; route default-source loads through the provider."""
+    global _config_loaded
+    # Bind the actual installed SDK signature so positional arguments,
+    # defaults, duplicate arguments and unsupported flags retain SDK semantics.
+    bound = inspect.signature(_original_load_kube_config).bind(*args, **kwargs)
+    bound.apply_defaults()
+    parameters = bound.arguments
+    if parameters.get("config_file") is not None:
+        result = _original_load_kube_config(*args, **kwargs)
         _config_loaded = True
-        return
-
-    if _config_loaded:
-        return
-
-    from kubernetes.config.config_exception import ConfigException
-
-    try:
-        from kubernetes import config
-        config.load_incluster_config()
-        logger.info("Loaded in-cluster Kubernetes configuration")
-        _config_loaded = True
-        return
-    except ConfigException:
-        pass
-
-    if _original_load_kube_config:
-        _original_load_kube_config(*args, **kwargs)
-        _config_loaded = True
+        return result
+    load_kubernetes_config(
+        parameters.get("context") or "",
+        client_configuration=parameters.get("client_configuration"),
+        persist_config=parameters.get("persist_config", True),
+        temp_file_path=parameters.get("temp_file_path"),
+    )
 
 
 def patch_kubernetes_config():
-    """Patch the kubernetes config module to support in-cluster config.
-
-    This should be called early in the application startup.
-    """
+    """Route legacy default-source SDK loads through the same provider."""
     global _original_load_kube_config
+    from kubernetes import config
 
-    try:
-        from kubernetes import config
-
-        if _original_load_kube_config is None:
-            _original_load_kube_config = config.load_kube_config
-            config.load_kube_config = _patched_load_kube_config
-            logger.debug("Patched kubernetes.config.load_kube_config for in-cluster support")
-    except ImportError:
-        logger.debug("kubernetes package not available for patching")
+    if _original_load_kube_config is None:
+        _original_load_kube_config = config.load_kube_config
+        config.load_kube_config = wraps(_original_load_kube_config)(
+            _patched_load_kube_config
+        )
 
 
 patch_kubernetes_config()
 
 
 def _load_config_for_context(context: str = "") -> Any:
+    """Create a context client from one source, optionally bypassing its cache."""
+    return get_provider().get_api_client(context, use_cache=not _stateless_mode)
+
+
+def get_kubectl_env() -> Dict[str, str]:
+    """Return a subprocess environment using the SDK provider's pathlist.
+
+    This does not load credentials, read kubeconfig files, initialize a
+    provider, or mutate the process environment.
     """
-    Load kubernetes config for a specific context and return ApiClient.
-
-    Uses the provider module for caching when available, unless stateless
-    mode is enabled.
-
-    Args:
-        context: Context name (empty for default)
-
-    Returns:
-        kubernetes.client.ApiClient configured for the context
-
-    Raises:
-        UnknownContextError: If context is not found (when provider available)
-        RuntimeError: If config cannot be loaded
-    """
-    if not _stateless_mode and _HAS_PROVIDER:
-        try:
-            provider = get_provider()
-            return provider.get_api_client(context)
-        except (UnknownContextError, ProviderError):
-            raise
-        except Exception as e:
-            logger.warning(f"Provider failed, falling back to basic config: {e}")
-
-    from kubernetes import client, config
-    from kubernetes.config.config_exception import ConfigException
-
-    try:
-        config.load_incluster_config()
-        return client.ApiClient()
-    except ConfigException:
-        logger.debug("In-cluster config not available in fallback path")
-
-    kubeconfig_path = os.environ.get('KUBECONFIG', '~/.kube/config')
-    kubeconfig_path = os.path.expanduser(kubeconfig_path)
-
-    if not os.path.exists(kubeconfig_path):
-        raise RuntimeError(
-            f"No Kubernetes configuration found. "
-            f"In-cluster config not available and kubeconfig not found at '{kubeconfig_path}'. "
-            f"If running in a Kubernetes pod, ensure the ServiceAccount token is mounted "
-            f"and KUBERNETES_SERVICE_HOST/KUBERNETES_SERVICE_PORT env vars are set. "
-            f"Set MCP_K8S_PROVIDER=in-cluster for in-cluster deployments."
+    with KubernetesProvider._instance_lock:
+        provider = KubernetesProvider._instance
+        pathlist = (
+            provider.config.kubeconfig_path
+            if provider is not None
+            else resolve_kubeconfig_source()[0]
         )
-
-    api_config = client.Configuration()
-
-    if context:
-        config.load_kube_config(
-            config_file=kubeconfig_path,
-            context=context,
-            client_configuration=api_config
-        )
-    else:
-        config.load_kube_config(
-            config_file=kubeconfig_path,
-            client_configuration=api_config
-        )
-
-    return client.ApiClient(configuration=api_config)
+    environment = os.environ.copy()
+    environment["KUBECONFIG"] = os.pathsep.join(get_kubeconfig_paths(pathlist))
+    return environment
 
 
 def _get_client(context: str, client_class):
     """Helper to create a configured Kubernetes API client."""
-    from kubernetes import client
     try:
         api_client = _load_config_for_context(context)
         return client_class(api_client=api_client)
+    except (ProviderError, UnknownContextError):
+        raise
     except Exception as e:
-        raise RuntimeError(f"Invalid kube-config. Context: {context or 'default'}. Error: {e}")
+        raise RuntimeError(
+            f"Invalid kube-config. Context: {context or 'default'}. Error: {e}"
+        ) from e
 
 
 def get_k8s_client(context: str = ""):
     """Get a configured Kubernetes Core API client."""
     from kubernetes import client
+
     return _get_client(context, client.CoreV1Api)
 
 
 def get_apps_client(context: str = ""):
     """Get a configured Kubernetes Apps API client."""
     from kubernetes import client
+
     return _get_client(context, client.AppsV1Api)
 
 
 def get_rbac_client(context: str = ""):
     """Get a configured Kubernetes RBAC API client."""
     from kubernetes import client
+
     return _get_client(context, client.RbacAuthorizationV1Api)
 
 
 def get_networking_client(context: str = ""):
     """Get a configured Kubernetes Networking API client."""
     from kubernetes import client
+
     return _get_client(context, client.NetworkingV1Api)
 
 
 def get_storage_client(context: str = ""):
     """Get a configured Kubernetes Storage API client."""
     from kubernetes import client
+
     return _get_client(context, client.StorageV1Api)
 
 
 def get_batch_client(context: str = ""):
     """Get a configured Kubernetes Batch API client."""
     from kubernetes import client
+
     return _get_client(context, client.BatchV1Api)
 
 
 def get_autoscaling_client(context: str = ""):
     """Get a configured Kubernetes Autoscaling API client."""
     from kubernetes import client
+
     return _get_client(context, client.AutoscalingV1Api)
 
 
 def get_policy_client(context: str = ""):
     """Get a configured Kubernetes Policy API client."""
     from kubernetes import client
+
     return _get_client(context, client.PolicyV1Api)
 
 
 def get_custom_objects_client(context: str = ""):
     """Get a configured Kubernetes Custom Objects API client."""
     from kubernetes import client
+
     return _get_client(context, client.CustomObjectsApi)
 
 
 def get_version_client(context: str = ""):
     """Get a configured Kubernetes Version API client."""
     from kubernetes import client
+
     return _get_client(context, client.VersionApi)
 
 
 def get_admissionregistration_client(context: str = ""):
     """Get a configured Kubernetes Admission Registration API client."""
     from kubernetes import client
+
     return _get_client(context, client.AdmissionregistrationV1Api)
 
 
 def get_apiextensions_client(context: str = ""):
     """Get a configured Kubernetes API Extensions client."""
     from kubernetes import client
+
     return _get_client(context, client.ApiextensionsV1Api)
 
 
 def get_coordination_client(context: str = ""):
     """Get a configured Kubernetes Coordination API client."""
     from kubernetes import client
+
     return _get_client(context, client.CoordinationV1Api)
 
 
 def get_events_client(context: str = ""):
     """Get a configured Kubernetes Events API client."""
     from kubernetes import client
+
     return _get_client(context, client.EventsV1Api)
 
 
 def list_contexts() -> list:
-    """List all available kubeconfig contexts."""
-    if _HAS_PROVIDER:
-        try:
-            provider = get_provider()
-            contexts = provider.list_contexts()
-            return [
-                {
-                    "name": ctx.name,
-                    "cluster": ctx.cluster,
-                    "user": ctx.user,
-                    "namespace": ctx.namespace,
-                    "active": ctx.is_active
-                }
-                for ctx in contexts
-            ]
-        except Exception as e:
-            logger.warning(f"Provider list_contexts failed: {e}")
-
-    from kubernetes import config
-
-    try:
-        kubeconfig_path = os.environ.get('KUBECONFIG', '~/.kube/config')
-        kubeconfig_path = os.path.expanduser(kubeconfig_path)
-
-        contexts, active = config.list_kube_config_contexts(config_file=kubeconfig_path)
-
-        return [
-            {
-                "name": ctx.get("name"),
-                "cluster": ctx.get("context", {}).get("cluster"),
-                "user": ctx.get("context", {}).get("user"),
-                "namespace": ctx.get("context", {}).get("namespace", "default"),
-                "active": ctx.get("name") == (active.get("name") if active else None)
-            }
-            for ctx in contexts
-        ]
-    except Exception as e:
-        logger.error(f"Error listing contexts: {e}")
-        return []
+    """List contexts without concealing a failed configuration read."""
+    return [
+        {
+            "name": ctx.name,
+            "cluster": ctx.cluster,
+            "user": ctx.user,
+            "namespace": ctx.namespace,
+            "active": ctx.is_active,
+        }
+        for ctx in get_provider().list_contexts()
+    ]
 
 
 def get_active_context() -> Optional[str]:
-    """Get the current active context name."""
-    if _HAS_PROVIDER:
-        try:
-            return provider_get_current_context()
-        except Exception as e:
-            logger.warning(f"Provider get_current_context failed: {e}")
-
-    from kubernetes import config
-    try:
-        kubeconfig_path = os.environ.get('KUBECONFIG', '~/.kube/config')
-        kubeconfig_path = os.path.expanduser(kubeconfig_path)
-
-        _, active = config.list_kube_config_contexts(config_file=kubeconfig_path)
-        return active.get("name") if active else None
-    except Exception as e:
-        logger.error(f"Error getting active context: {e}")
-        return None
+    """Return the configured active context, or None when none is selected."""
+    return provider_get_current_context()
 
 
 def context_exists(context: str) -> bool:
@@ -551,22 +462,41 @@ def _get_kubectl_context_args(context: str = "") -> list:
     return []
 
 
-_BASE_EXPORTS = [
-    "get_k8s_client", "get_apps_client", "get_rbac_client", "get_networking_client",
-    "get_storage_client", "get_batch_client", "get_autoscaling_client", "get_policy_client",
-    "get_custom_objects_client", "get_version_client", "get_admissionregistration_client",
-    "get_apiextensions_client", "get_coordination_client", "get_events_client",
-    "load_kubernetes_config", "patch_kubernetes_config",
-    "list_contexts", "get_active_context", "context_exists",
-    "enable_kubeconfig_watch", "disable_kubeconfig_watch", "on_config_change", "KubeconfigWatcher",
-    "is_stateless_mode", "set_stateless_mode",
+__all__ = [
+    "get_k8s_client",
+    "get_apps_client",
+    "get_rbac_client",
+    "get_networking_client",
+    "get_storage_client",
+    "get_batch_client",
+    "get_autoscaling_client",
+    "get_policy_client",
+    "get_custom_objects_client",
+    "get_version_client",
+    "get_admissionregistration_client",
+    "get_apiextensions_client",
+    "get_coordination_client",
+    "get_events_client",
+    "load_kubernetes_config",
+    "patch_kubernetes_config",
+    "list_contexts",
+    "get_active_context",
+    "context_exists",
+    "enable_kubeconfig_watch",
+    "disable_kubeconfig_watch",
+    "on_config_change",
+    "KubeconfigWatcher",
+    "is_stateless_mode",
+    "set_stateless_mode",
+    "get_kubeconfig_paths",
+    "resolve_kubeconfig_source",
+    "get_kubectl_env",
+    "KubernetesProvider",
+    "ProviderConfig",
+    "ProviderType",
+    "ProviderError",
+    "UnknownContextError",
+    "get_provider",
+    "get_context_names",
+    "validate_context",
 ]
-
-if _HAS_PROVIDER:
-    __all__ = _BASE_EXPORTS + [
-        "KubernetesProvider", "ProviderConfig", "ProviderType",
-        "ProviderError", "UnknownContextError",
-        "get_provider", "validate_context",
-    ]
-else:
-    __all__ = _BASE_EXPORTS

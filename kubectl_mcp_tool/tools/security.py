@@ -9,7 +9,7 @@ from ..k8s_config import (
     get_networking_client,
 )
 from kubectl_mcp_tool.schemas import AnalyzeNetworkPoliciesResponse
-from kubectl_mcp_tool.structured import structured_response
+from kubectl_mcp_tool.structured import response_schema, structured_response
 
 logger = logging.getLogger("mcp-server")
 
@@ -85,7 +85,7 @@ def register_security_tools(server, non_destructive: bool):
             return {"success": False, "error": str(e)}
 
     @server.tool(
-        output_schema=AnalyzeNetworkPoliciesResponse.model_json_schema(),
+        output_schema=response_schema(AnalyzeNetworkPoliciesResponse),
         annotations=ToolAnnotations(
             title="Analyze Network Policies",
             readOnlyHint=True,

@@ -1,6 +1,15 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
+
+
+class ErrorResponse(BaseModel):
+    """Shared error contract; retain tool-specific diagnostic metadata."""
+
+    model_config = ConfigDict(extra="allow")
+
+    success: Literal[False]
+    error: str
 
 
 class PodItem(BaseModel):
@@ -11,13 +20,13 @@ class PodItem(BaseModel):
 
 
 class GetPodsResponse(BaseModel):
-    success: bool
+    success: Literal[True]
     context: str
     pods: List[PodItem]
 
 
 class GetLogsResponse(BaseModel):
-    success: bool
+    success: Literal[True]
     context: str
     logs: str
 
@@ -31,13 +40,13 @@ class EventItem(BaseModel):
 
 
 class GetPodEventsResponse(BaseModel):
-    success: bool
+    success: Literal[True]
     context: str
     events: List[EventItem]
 
 
 class CheckPodHealthResponse(BaseModel):
-    success: bool
+    success: Literal[True]
     context: str
     phase: str
     conditions: List[str]
@@ -52,26 +61,26 @@ class DeploymentItem(BaseModel):
 
 
 class GetDeploymentsResponse(BaseModel):
-    success: bool
+    success: Literal[True]
     context: str
     deployments: List[DeploymentItem]
 
 
 class DeploymentHistoryResponse(BaseModel):
-    success: bool
+    success: Literal[True]
     context: str
     history: str
 
 
 class CheckDeploymentHealthResponse(BaseModel):
-    success: bool
+    success: Literal[True]
     context: str
     healthy: bool
     message: str
 
 
 class GetNamespacesResponse(BaseModel):
-    success: bool
+    success: Literal[True]
     context: str
     namespaces: List[str]
 
@@ -83,7 +92,7 @@ class ConfigMapItem(BaseModel):
 
 
 class GetConfigMapsResponse(BaseModel):
-    success: bool
+    success: Literal[True]
     context: str
     configmaps: List[ConfigMapItem]
 
@@ -96,7 +105,7 @@ class ServiceItem(BaseModel):
 
 
 class GetServicesResponse(BaseModel):
-    success: bool
+    success: Literal[True]
     context: str
     services: List[ServiceItem]
 
@@ -124,15 +133,15 @@ class NodesSummary(BaseModel):
 
 
 class GetNodesSummaryResponse(BaseModel):
-    success: bool
+    success: Literal[True]
     context: str
     summary: NodesSummary
 
 
 class ListContextsResponse(BaseModel):
-    success: bool
+    success: Literal[True]
     contexts: List[Any]
-    active_context: str
+    active_context: Optional[str]
     total: int
 
 
@@ -166,7 +175,7 @@ class IngressItem(BaseModel):
 
 
 class GetIngressResponse(BaseModel):
-    success: bool
+    success: Literal[True]
     context: str
     ingresses: List[IngressItem]
 
@@ -181,7 +190,7 @@ class StorageClassItem(BaseModel):
 
 
 class GetStorageClassesResponse(BaseModel):
-    success: bool
+    success: Literal[True]
     context: str
     storageClasses: List[StorageClassItem]
 
@@ -197,7 +206,7 @@ class PVCItem(BaseModel):
 
 
 class GetPVCsResponse(BaseModel):
-    success: bool
+    success: Literal[True]
     context: str
     pvcs: List[PVCItem]
 
@@ -210,7 +219,7 @@ class NetworkPolicyItem(BaseModel):
 
 
 class AnalyzeNetworkPoliciesResponse(BaseModel):
-    success: bool
+    success: Literal[True]
     context: str
     totalPolicies: int
     protectedNamespaces: List[str]
@@ -231,26 +240,26 @@ class RBACRoleItem(BaseModel):
 
 
 class GetRBACRolesResponse(BaseModel):
-    success: bool
+    success: Literal[True]
     context: str
     roles: List[RBACRoleItem]
 
 
 class HelmListResponse(BaseModel):
-    success: bool
+    success: Literal[True]
     context: str
     releases: List[Dict[str, Any]]
     count: int
 
 
 class HelmStatusResponse(BaseModel):
-    success: bool
+    success: Literal[True]
     context: str
     status: Dict[str, Any]
 
 
 class GetCostAnalysisResponse(BaseModel):
-    success: bool
+    success: Literal[True]
     context: str
     note: str
     byNamespace: Any

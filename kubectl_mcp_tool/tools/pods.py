@@ -12,11 +12,11 @@ from typing import Any, Dict, List, Optional
 
 from mcp.types import ToolAnnotations
 
-from kubectl_mcp_tool.k8s_config import get_k8s_client, _get_kubectl_context_args
+from kubectl_mcp_tool.k8s_config import get_k8s_client, _get_kubectl_context_args, get_kubectl_env
 from kubectl_mcp_tool.schemas import (
     CheckPodHealthResponse,
 )
-from kubectl_mcp_tool.structured import structured_response
+from kubectl_mcp_tool.structured import response_schema, structured_response
 
 logger = logging.getLogger("mcp-server")
 
@@ -35,7 +35,7 @@ def register_pod_tools(
     from kubectl_mcp_tool.elicit import confirm_destructive, check_write_allowed
 
     @server.tool(
-        output_schema=CheckPodHealthResponse.model_json_schema(),
+        output_schema=response_schema(CheckPodHealthResponse),
         annotations=ToolAnnotations(
             title="Check Pod Health",
             readOnlyHint=True,
@@ -108,7 +108,7 @@ def register_pod_tools(
             cmd.append("--")
             cmd.extend(shlex.split(command))
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=60)
 
             return {
                 "success": result.returncode == 0,
@@ -157,7 +157,7 @@ def register_pod_tools(
             for state in states:
                 if state == "Evicted":
                     cmd = ["kubectl"] + ctx_args + ["get", "pods"] + ns_flag + ["-o", "json"]
-                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                    result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=30)
                     if result.returncode == 0:
                         try:
                             pods = json.loads(result.stdout)
@@ -166,7 +166,7 @@ def register_pod_tools(
                                     pod_name = pod["metadata"]["name"]
                                     pod_ns = pod["metadata"]["namespace"]
                                     del_cmd = ["kubectl"] + ctx_args + ["delete", "pod", pod_name, "-n", pod_ns]
-                                    subprocess.run(del_cmd, capture_output=True, timeout=10)
+                                    subprocess.run(del_cmd, env=get_kubectl_env(), capture_output=True, timeout=10)
                                     deleted_pods.append(f"{pod_ns}/{pod_name}")
                         except json.JSONDecodeError:
                             pass
