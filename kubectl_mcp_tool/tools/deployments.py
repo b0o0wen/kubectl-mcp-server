@@ -12,8 +12,10 @@ from ..k8s_config import (
     _load_config_for_context,
     _get_kubectl_context_args,
 )
+from kubectl_mcp_tool.k8s_config import get_kubectl_env
 from kubectl_mcp_tool.schemas import GetDeploymentsResponse
 from kubectl_mcp_tool.structured import structured_response
+from kubectl_mcp_tool.structured import response_schema
 
 logger = logging.getLogger("mcp-server")
 
@@ -23,7 +25,7 @@ def register_deployment_tools(server: "FastMCP", non_destructive: bool):
     from kubectl_mcp_tool.elicit import check_write_allowed
 
     @server.tool(
-        output_schema=GetDeploymentsResponse.model_json_schema(),
+        output_schema=response_schema(GetDeploymentsResponse),
         annotations=ToolAnnotations(
             title="Get Deployments",
             readOnlyHint=True,
@@ -162,7 +164,7 @@ def register_deployment_tools(server: "FastMCP", non_destructive: bool):
             cmd = ["kubectl", "scale", "deployment", name, f"--replicas={replicas}", "-n", namespace]
             cmd.extend(_get_kubectl_context_args(context))
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=30)
             if result.returncode == 0:
                 return {
                     "success": True,
@@ -202,7 +204,7 @@ def register_deployment_tools(server: "FastMCP", non_destructive: bool):
             cmd = ["kubectl", "rollout", "restart", "deployment", name, "-n", namespace]
             cmd.extend(_get_kubectl_context_args(context))
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=30)
             if result.returncode == 0:
                 return {
                     "success": True,

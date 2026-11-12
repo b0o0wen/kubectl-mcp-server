@@ -25,8 +25,10 @@ from kubectl_mcp_tool.k8s_config import (
     set_stateless_mode,
     _get_kubectl_context_args,
 )
+from kubectl_mcp_tool.k8s_config import get_kubectl_env
 from kubectl_mcp_tool.schemas import GetNodesSummaryResponse, ListContextsResponse
 from kubectl_mcp_tool.structured import structured_response
+from kubectl_mcp_tool.structured import response_schema
 
 logger = logging.getLogger("mcp-server")
 
@@ -63,7 +65,7 @@ def register_cluster_tools(server: "FastMCP", non_destructive: bool):
     """Register cluster and context management tools."""
 
     @server.tool(
-        output_schema=ListContextsResponse.model_json_schema(),
+        output_schema=response_schema(ListContextsResponse),
         annotations=ToolAnnotations(
             title="List Contexts",
             readOnlyHint=True,
@@ -162,7 +164,7 @@ def register_cluster_tools(server: "FastMCP", non_destructive: bool):
                 cmd.append("--minify")
             cmd.extend(["--raw=false", "-o", "json"])  # raw=false strips sensitive data
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=10)
 
             if result.returncode == 0:
                 try:
@@ -209,7 +211,7 @@ def register_cluster_tools(server: "FastMCP", non_destructive: bool):
         """
         try:
             result = subprocess.run(
-                ["kubectl", "config", "use-context", context_name],
+                ["kubectl", "config", "use-context", context_name], env=get_kubectl_env(),
                 capture_output=True, text=True, timeout=10
             )
             if result.returncode == 0:
@@ -246,7 +248,7 @@ def register_cluster_tools(server: "FastMCP", non_destructive: bool):
                 cmd.append("--current")
             cmd.extend(["--namespace", namespace])
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=10)
             if result.returncode == 0:
                 return {"success": True, "message": f"Namespace set to: {namespace}"}
             return {"success": False, "error": result.stderr}
@@ -272,7 +274,7 @@ def register_cluster_tools(server: "FastMCP", non_destructive: bool):
         try:
             ctx_args = _get_kubectl_context_args(context)
             result = subprocess.run(
-                ["kubectl"] + ctx_args + ["cluster-info"],
+                ["kubectl"] + ctx_args + ["cluster-info"], env=get_kubectl_env(),
                 capture_output=True, text=True, timeout=30
             )
             if result.returncode == 0:
@@ -340,7 +342,7 @@ def register_cluster_tools(server: "FastMCP", non_destructive: bool):
         try:
             ctx_args = _get_kubectl_context_args(context)
             result = subprocess.run(
-                ["kubectl"] + ctx_args + ["get", "componentstatuses", "-o", "json"],
+                ["kubectl"] + ctx_args + ["get", "componentstatuses", "-o", "json"], env=get_kubectl_env(),
                 capture_output=True, text=True, timeout=30
             )
             if result.returncode == 0:
@@ -377,7 +379,7 @@ def register_cluster_tools(server: "FastMCP", non_destructive: bool):
         try:
             ctx_args = _get_kubectl_context_args(context)
             result = subprocess.run(
-                ["kubectl"] + ctx_args + ["explain", resource],
+                ["kubectl"] + ctx_args + ["explain", resource], env=get_kubectl_env(),
                 capture_output=True, text=True, timeout=30
             )
             return {
@@ -407,7 +409,7 @@ def register_cluster_tools(server: "FastMCP", non_destructive: bool):
         try:
             ctx_args = _get_kubectl_context_args(context)
             result = subprocess.run(
-                ["kubectl"] + ctx_args + ["api-resources"],
+                ["kubectl"] + ctx_args + ["api-resources"], env=get_kubectl_env(),
                 capture_output=True, text=True, timeout=30
             )
             return {
@@ -437,7 +439,7 @@ def register_cluster_tools(server: "FastMCP", non_destructive: bool):
         try:
             ctx_args = _get_kubectl_context_args(context)
             result = subprocess.run(
-                ["kubectl"] + ctx_args + ["api-versions"],
+                ["kubectl"] + ctx_args + ["api-versions"], env=get_kubectl_env(),
                 capture_output=True, text=True, timeout=30
             )
             if result.returncode == 0:
@@ -534,7 +536,7 @@ def register_cluster_tools(server: "FastMCP", non_destructive: bool):
         try:
             ctx_args = _get_kubectl_context_args(context)
             result = subprocess.run(
-                ["kubectl"] + ctx_args + ["get", "crd", crd_name, "-o", "name"],
+                ["kubectl"] + ctx_args + ["get", "crd", crd_name, "-o", "name"], env=get_kubectl_env(),
                 capture_output=True, text=True, timeout=10
             )
 
@@ -568,7 +570,7 @@ def register_cluster_tools(server: "FastMCP", non_destructive: bool):
         try:
             ctx_args = _get_kubectl_context_args(context)
             result = subprocess.run(
-                ["kubectl"] + ctx_args + ["get", "crd", "-o", "json"],
+                ["kubectl"] + ctx_args + ["get", "crd", "-o", "json"], env=get_kubectl_env(),
                 capture_output=True, text=True, timeout=30
             )
 
@@ -597,7 +599,7 @@ def register_cluster_tools(server: "FastMCP", non_destructive: bool):
             return {"success": False, "error": str(e)}
 
     @server.tool(
-        output_schema=GetNodesSummaryResponse.model_json_schema(),
+        output_schema=response_schema(GetNodesSummaryResponse),
         annotations=ToolAnnotations(
             title="Get Nodes Summary",
             readOnlyHint=True,
@@ -852,7 +854,7 @@ def register_cluster_tools(server: "FastMCP", non_destructive: bool):
                 f"/api/v1/nodes/{name}/proxy/logs/{log_path}"
             ]
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=60)
 
             if result.returncode != 0:
                 error_msg = result.stderr.strip()
@@ -938,7 +940,7 @@ def register_cluster_tools(server: "FastMCP", non_destructive: bool):
                 f"/api/v1/nodes/{name}/proxy/stats/summary"
             ]
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=120)
 
             if result.returncode != 0:
                 error_msg = result.stderr.strip()
@@ -1042,7 +1044,7 @@ def register_cluster_tools(server: "FastMCP", non_destructive: bool):
             if name:
                 cmd.append(name)
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=60)
 
             if result.returncode != 0:
                 error_msg = result.stderr.strip()
@@ -1238,7 +1240,7 @@ def register_multicluster_tools(server, non_destructive: bool):
                 if field_selector:
                     cmd.extend(["--field-selector", field_selector])
 
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=30)
 
                 if result.returncode != 0:
                     return {

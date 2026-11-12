@@ -5,13 +5,14 @@ import json
 from typing import Any, Dict, List
 
 from ..k8s_config import _get_kubectl_context_args
+from kubectl_mcp_tool.k8s_config import get_kubectl_env
 
 
 def run_kubectl(args: List[str], context: str = "", timeout: int = 60) -> Dict[str, Any]:
     """Run kubectl command and return result."""
     cmd = ["kubectl"] + _get_kubectl_context_args(context) + args
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=timeout)
         if result.returncode == 0:
             return {"success": True, "output": result.stdout}
         return {"success": False, "error": result.stderr}

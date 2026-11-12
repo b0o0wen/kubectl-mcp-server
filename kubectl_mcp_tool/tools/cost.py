@@ -7,8 +7,10 @@ from typing import Any, Dict, List, Optional
 from mcp.types import ToolAnnotations
 
 from ..k8s_config import get_k8s_client, get_apps_client, _get_kubectl_context_args
+from kubectl_mcp_tool.k8s_config import get_kubectl_env
 from kubectl_mcp_tool.schemas import GetCostAnalysisResponse
 from kubectl_mcp_tool.structured import structured_response
+from kubectl_mcp_tool.structured import response_schema
 
 logger = logging.getLogger("mcp-server")
 
@@ -187,7 +189,7 @@ def register_cost_tools(server: "FastMCP", non_destructive: bool):
             else:
                 cmd.append("-A")
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=60)
             if result.returncode != 0:
                 return {"success": False, "error": result.stderr.strip() or "Metrics server not available"}
 
@@ -291,7 +293,7 @@ def register_cost_tools(server: "FastMCP", non_destructive: bool):
             return {"success": False, "error": str(e)}
 
     @server.tool(
-        output_schema=GetCostAnalysisResponse.model_json_schema(),
+        output_schema=response_schema(GetCostAnalysisResponse),
         annotations=ToolAnnotations(
             title="Get Cost Analysis",
             readOnlyHint=True,
@@ -404,7 +406,7 @@ def register_cost_tools(server: "FastMCP", non_destructive: bool):
             else:
                 cmd.append("-A")
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=60)
             if result.returncode != 0:
                 return {"success": False, "error": result.stderr.strip() or "Metrics server not available"}
 
@@ -509,7 +511,7 @@ def register_cost_tools(server: "FastMCP", non_destructive: bool):
                 else:
                     cmd.append("-A")
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=60)
             if result.returncode != 0:
                 return {"success": False, "error": result.stderr.strip() or "Metrics server not available"}
 
@@ -682,7 +684,7 @@ def register_cost_tools(server: "FastMCP", non_destructive: bool):
                 deployments = apps.list_namespaced_deployment(namespace).items
 
             cmd = ["kubectl"] + _get_kubectl_context_args(context) + ["top", "pods", "-n", namespace, "--no-headers"]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=60)
 
             usage_map = {}
             if result.returncode == 0:

@@ -9,12 +9,14 @@ from ..k8s_config import (
     get_apiextensions_client,
     _get_kubectl_context_args,
 )
+from kubectl_mcp_tool.k8s_config import get_kubectl_env
 from kubectl_mcp_tool.schemas import (
     GetNamespacesResponse,
     GetConfigMapsResponse,
     GetServicesResponse,
 )
 from kubectl_mcp_tool.structured import structured_response
+from kubectl_mcp_tool.structured import response_schema
 
 logger = logging.getLogger("mcp-server")
 
@@ -23,7 +25,7 @@ def register_core_tools(server: "FastMCP", non_destructive: bool):
     """Register core Kubernetes resource tools."""
 
     @server.tool(
-        output_schema=GetNamespacesResponse.model_json_schema(),
+        output_schema=response_schema(GetNamespacesResponse),
         annotations=ToolAnnotations(
             title="Get Namespaces",
             readOnlyHint=True,
@@ -51,7 +53,7 @@ def register_core_tools(server: "FastMCP", non_destructive: bool):
             return {"success": False, "error": str(e)}
 
     @server.tool(
-        output_schema=GetServicesResponse.model_json_schema(),
+        output_schema=response_schema(GetServicesResponse),
         annotations=ToolAnnotations(
             title="Get Services",
             readOnlyHint=True,
@@ -136,7 +138,7 @@ def register_core_tools(server: "FastMCP", non_destructive: bool):
             return {"success": False, "error": str(e)}
 
     @server.tool(
-        output_schema=GetConfigMapsResponse.model_json_schema(),
+        output_schema=response_schema(GetConfigMapsResponse),
         annotations=ToolAnnotations(
             title="Get ConfigMaps",
             readOnlyHint=True,
@@ -287,7 +289,7 @@ def register_core_tools(server: "FastMCP", non_destructive: bool):
                 cmd.append("--all-namespaces")
             cmd.append("--no-headers")
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=30)
             if result.returncode != 0:
                 return {"success": False, "error": result.stderr or "Failed to get metrics"}
 

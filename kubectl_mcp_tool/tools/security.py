@@ -10,6 +10,7 @@ from ..k8s_config import (
 )
 from kubectl_mcp_tool.schemas import AnalyzeNetworkPoliciesResponse, GetRBACRolesResponse
 from kubectl_mcp_tool.structured import structured_response
+from kubectl_mcp_tool.structured import response_schema
 
 logger = logging.getLogger("mcp-server")
 
@@ -18,7 +19,7 @@ def register_security_tools(server, non_destructive: bool):
     """Register RBAC and security-related tools."""
 
     @server.tool(
-        output_schema=GetRBACRolesResponse.model_json_schema(),
+        output_schema=response_schema(GetRBACRolesResponse),
         annotations=ToolAnnotations(
             title="Get RBAC Roles",
             readOnlyHint=True,
@@ -177,7 +178,7 @@ def register_security_tools(server, non_destructive: bool):
             return {"success": False, "error": str(e)}
 
     @server.tool(
-        output_schema=AnalyzeNetworkPoliciesResponse.model_json_schema(),
+        output_schema=response_schema(AnalyzeNetworkPoliciesResponse),
         annotations=ToolAnnotations(
             title="Analyze Network Policies",
             readOnlyHint=True,

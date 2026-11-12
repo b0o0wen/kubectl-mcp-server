@@ -6,6 +6,7 @@ from mcp.types import ToolAnnotations
 from ..k8s_config import get_k8s_client, get_storage_client
 from kubectl_mcp_tool.schemas import GetStorageClassesResponse, GetPVCsResponse
 from kubectl_mcp_tool.structured import structured_response
+from kubectl_mcp_tool.structured import response_schema
 
 logger = logging.getLogger("mcp-server")
 
@@ -75,7 +76,7 @@ def register_storage_tools(server, non_destructive: bool):
             return {"success": False, "error": str(e)}
 
     @server.tool(
-        output_schema=GetPVCsResponse.model_json_schema(),
+        output_schema=response_schema(GetPVCsResponse),
         annotations=ToolAnnotations(
             title="Get Persistent Volume Claims",
             readOnlyHint=True,
@@ -123,7 +124,7 @@ def register_storage_tools(server, non_destructive: bool):
             return {"success": False, "error": str(e)}
 
     @server.tool(
-        output_schema=GetStorageClassesResponse.model_json_schema(),
+        output_schema=response_schema(GetStorageClassesResponse),
         annotations=ToolAnnotations(
             title="Get Storage Classes",
             readOnlyHint=True,

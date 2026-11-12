@@ -5,8 +5,10 @@ from typing import Any, Dict, List, Optional
 from mcp.types import ToolAnnotations
 
 from ..k8s_config import get_k8s_client, get_networking_client, _get_kubectl_context_args
+from kubectl_mcp_tool.k8s_config import get_kubectl_env
 from kubectl_mcp_tool.schemas import GetIngressResponse
 from kubectl_mcp_tool.structured import structured_response
+from kubectl_mcp_tool.structured import response_schema
 
 logger = logging.getLogger("mcp-server")
 
@@ -17,7 +19,7 @@ def register_networking_tools(server: "FastMCP", non_destructive: bool):
     from kubectl_mcp_tool.elicit import confirm_destructive
 
     @server.tool(
-        output_schema=GetIngressResponse.model_json_schema(),
+        output_schema=response_schema(GetIngressResponse),
         annotations=ToolAnnotations(
             title="Get Ingress Resources",
             readOnlyHint=True,
@@ -175,7 +177,7 @@ def register_networking_tools(server: "FastMCP", non_destructive: bool):
 
             # Test DNS resolution
             dns_cmd = ["kubectl"] + ctx_args + ["exec", source_pod, "-n", source_namespace, "--", "nslookup", target]
-            dns_result = subprocess.run(dns_cmd, capture_output=True, text=True, timeout=30)
+            dns_result = subprocess.run(dns_cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=30)
             results["tests"].append({
                 "test": "DNS Resolution",
                 "passed": dns_result.returncode == 0,
@@ -190,7 +192,7 @@ def register_networking_tools(server: "FastMCP", non_destructive: bool):
                 conn_cmd = ["kubectl"] + ctx_args + ["exec", source_pod, "-n", source_namespace, "--",
                            "ping", "-c", "3", target]
 
-            conn_result = subprocess.run(conn_cmd, capture_output=True, text=True, timeout=30)
+            conn_result = subprocess.run(conn_cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=30)
             results["tests"].append({
                 "test": f"Connectivity to {target}" + (f":{port}" if port else ""),
                 "passed": conn_result.returncode == 0,
@@ -238,7 +240,7 @@ def register_networking_tools(server: "FastMCP", non_destructive: bool):
                 pod_name = pods.items[0].metadata.name
 
             cmd = ["kubectl"] + _get_kubectl_context_args(context) + ["exec", pod_name, "-n", namespace, "--", "nslookup", hostname]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=30)
 
             return {
                 "success": result.returncode == 0,

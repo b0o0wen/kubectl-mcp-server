@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from mcp.types import ToolAnnotations
 
 from kubectl_mcp_tool.k8s_config import _get_kubectl_context_args
+from kubectl_mcp_tool.k8s_config import get_kubectl_env
 
 logger = logging.getLogger("mcp-server")
 
@@ -44,7 +45,7 @@ def register_operations_tools(server: "FastMCP", non_destructive: bool):
                 temp_path = f.name
 
             cmd = ["kubectl"] + _get_kubectl_context_args(context) + ["apply", "-f", temp_path, "-n", namespace]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=30)
 
             if result.returncode == 0:
                 return {"success": True, "context": context or "current", "output": result.stdout.strip()}
@@ -80,7 +81,7 @@ def register_operations_tools(server: "FastMCP", non_destructive: bool):
         """
         try:
             cmd = ["kubectl"] + _get_kubectl_context_args(context) + ["describe", resource_type, name, "-n", namespace]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=30)
 
             if result.returncode == 0:
                 return {"success": True, "context": context or "current", "description": result.stdout}
@@ -153,7 +154,7 @@ def register_operations_tools(server: "FastMCP", non_destructive: bool):
                 }
 
             full_cmd = ["kubectl"] + _get_kubectl_context_args(context) + cmd_parts
-            result = subprocess.run(full_cmd, capture_output=True, text=True, timeout=60)
+            result = subprocess.run(full_cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=60)
 
             return {
                 "success": result.returncode == 0,
@@ -201,7 +202,7 @@ def register_operations_tools(server: "FastMCP", non_destructive: bool):
                 "--type", type_flag,
                 "-p", patch
             ]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=30)
 
             if result.returncode == 0:
                 return {"success": True, "context": context or "current", "output": result.stdout.strip()}
@@ -241,7 +242,7 @@ def register_operations_tools(server: "FastMCP", non_destructive: bool):
                     return blocked
 
             cmd = ["kubectl"] + _get_kubectl_context_args(context) + ["rollout", action, f"{resource_type}/{name}", "-n", namespace]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=60)
 
             if result.returncode == 0:
                 return {"success": True, "context": context or "current", "output": result.stdout.strip()}
@@ -277,7 +278,7 @@ def register_operations_tools(server: "FastMCP", non_destructive: bool):
             cmd = ["kubectl"] + _get_kubectl_context_args(context) + ["create", resource_type, name, "-n", namespace]
             if image and resource_type in ["deployment", "pod"]:
                 cmd.extend(["--image", image])
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=30)
             if result.returncode == 0:
                 return {"success": True, "context": context or "current", "output": result.stdout.strip()}
             else:
@@ -309,7 +310,7 @@ def register_operations_tools(server: "FastMCP", non_destructive: bool):
             return blocked
         try:
             cmd = ["kubectl"] + _get_kubectl_context_args(context) + ["delete", resource_type, name, "-n", namespace]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=30)
             if result.returncode == 0:
                 return {"success": True, "context": context or "current", "message": f"Deleted {resource_type}/{name}"}
             else:
@@ -348,7 +349,7 @@ def register_operations_tools(server: "FastMCP", non_destructive: bool):
             cmd = ["kubectl"] + _get_kubectl_context_args(context) + ["cp", source, destination, "-n", namespace]
             if container:
                 cmd.extend(["-c", container])
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=120)
             if result.returncode == 0:
                 return {"success": True, "context": context or "current", "message": f"Copied {source} to {destination}"}
             else:
@@ -380,7 +381,7 @@ def register_operations_tools(server: "FastMCP", non_destructive: bool):
             if namespace:
                 cmd.extend(["-n", namespace])
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=30)
 
             if result.returncode != 0:
                 return {"success": False, "error": result.stderr.strip()}
@@ -445,7 +446,7 @@ def register_operations_tools(server: "FastMCP", non_destructive: bool):
             if overwrite:
                 cmd.append("--overwrite")
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=30)
 
             if result.returncode != 0:
                 return {"success": False, "error": result.stderr.strip()}
@@ -506,7 +507,7 @@ def register_operations_tools(server: "FastMCP", non_destructive: bool):
             if overwrite:
                 cmd.append("--overwrite")
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=30)
 
             if result.returncode != 0:
                 return {"success": False, "error": result.stderr.strip()}
@@ -569,7 +570,7 @@ def register_operations_tools(server: "FastMCP", non_destructive: bool):
 
             cmd.append(taint_str)
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=30)
 
             if result.returncode != 0:
                 return {"success": False, "error": result.stderr.strip()}
@@ -618,7 +619,7 @@ def register_operations_tools(server: "FastMCP", non_destructive: bool):
             if namespace:
                 cmd.extend(["-n", namespace])
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 10)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=timeout + 10)
 
             if result.returncode != 0:
                 return {
@@ -682,7 +683,7 @@ def register_operations_tools(server: "FastMCP", non_destructive: bool):
                 if force:
                     cmd.append("--force")
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            result = subprocess.run(cmd, env=get_kubectl_env(), capture_output=True, text=True, timeout=120)
 
             if result.returncode == 0:
                 return {"success": True, "context": context or "current", "output": result.stdout.strip()}
