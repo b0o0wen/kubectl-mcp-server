@@ -9,6 +9,7 @@ from mcp.types import ToolAnnotations
 
 from kubectl_mcp_tool.k8s_config import _get_kubectl_context_args
 from kubectl_mcp_tool.k8s_config import get_kubectl_env
+from kubectl_mcp_tool.secret_readback import redact_secret_documents
 
 logger = logging.getLogger("mcp-server")
 
@@ -103,6 +104,9 @@ def register_operations_tools(server: "FastMCP", non_destructive: bool):
     def kubectl_generic(command: str, context: str = "") -> Dict[str, Any]:
         """Execute any kubectl command. Use with caution.
 
+        Secret JSON/YAML resource documents are returned with values and
+        annotations redacted. For other formats, request metadata only.
+
         Args:
             command: kubectl command to execute (without kubectl prefix)
             context: Kubernetes context to use (optional, uses current context if not specified)
@@ -159,8 +163,8 @@ def register_operations_tools(server: "FastMCP", non_destructive: bool):
             return {
                 "success": result.returncode == 0,
                 "context": context or "current",
-                "output": result.stdout,
-                "error": result.stderr if result.returncode != 0 else None
+                "output": redact_secret_documents(result.stdout),
+                "error": redact_secret_documents(result.stderr) if result.returncode != 0 else None
             }
         except Exception as e:
             logger.error(f"Error running kubectl command: {e}")

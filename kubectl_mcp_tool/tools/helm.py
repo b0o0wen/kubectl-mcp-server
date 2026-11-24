@@ -90,6 +90,7 @@ def register_helm_tools(
         repo: Optional[str] = None,
         values: Optional[dict] = None,
         context: str = "",
+        create_namespace: bool = False,
     ) -> Dict[str, Any]:
         """Install a Helm chart.
 
@@ -100,6 +101,7 @@ def register_helm_tools(
             repo: Repository in format 'repo_name=repo_url'
             values: Values to override
             context: Kubernetes context to use (optional, uses current context if not specified)
+            create_namespace: Explicitly allow Helm to create the namespace (requires cluster permission)
         """
         blocked = await check_write_allowed()
         if blocked:
@@ -115,18 +117,8 @@ def register_helm_tools(
                 chart = result
 
             cmd = ["helm"] + _get_helm_context_args(context) + ["install", name, chart, "-n", namespace]
-
-            try:
-                ns_cmd = ["kubectl"] + _get_kubectl_context_args(context) + ["get", "namespace", namespace]
-                subprocess.check_output(ns_cmd, env=get_kubectl_env(), stderr=subprocess.PIPE, text=True)
-            except subprocess.CalledProcessError:
-                logger.info(f"Namespace {namespace} not found, creating it")
-                create_ns_cmd = ["kubectl"] + _get_kubectl_context_args(context) + ["create", "namespace", namespace]
-                try:
-                    subprocess.check_output(create_ns_cmd, env=get_kubectl_env(), stderr=subprocess.PIPE, text=True)
-                except subprocess.CalledProcessError as e:
-                    logger.error(f"Error creating namespace: {e.stderr if hasattr(e, 'stderr') else str(e)}")
-                    return {"success": False, "error": f"Failed to create namespace: {e.stderr if hasattr(e, 'stderr') else str(e)}"}
+            if create_namespace:
+                cmd.append("--create-namespace")
 
             values_file = None
             try:
